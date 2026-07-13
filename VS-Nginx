@@ -1,0 +1,68 @@
+PostHog API Configuration on UAT Nginx
+Ticket Summary
+
+Title: Configure PostHog API on UAT
+Description: Configure PostHog API (to check enabled client status) — posthog/enabled?client_id=AA0720&platform=app running on 10.0.3.213, to UAT nginx
+Environment: UAT
+Status: Implemented
+
+Objective
+Expose the internal PostHog service (running on 10.x.x.x:8500) through UAT nginx, so that the endpoint /posthog/enabled is accessible externally and routes traffic to the correct backend to check client enabled status.
+Implementation Details
+An upstream block was declared for the PostHog backend, and an exact-match location block was added to route requests to it via proxy_pass.
+Nginx Configuration
+http {
+
+    upstream posthog_API {
+        server 10.x.x.x:8500;
+    }
+
+    server {
+        listen 80;
+        server_name invest.venturasecurities.uat;
+
+        location = /posthog/enabled {
+            proxy_pass http://posthog_API;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+}
+
+Configuration Breakdown
+
+upstream posthog_API — Declares the PostHog backend server (10.x.x.x:8500) as a named group, referenced in proxy_pass instead of hardcoding the IP directly
+location = /posthog/enabled — Exact-match route, only matches requests to /posthog/enabled (not sub-paths or trailing-slash variants)
+proxy_pass http://posthog_API; — Forwards matched requests to the PostHog backend
+proxy_set_header Host $host; — Passes the original requested hostname to the backend
+proxy_set_header X-Real-IP $remote_addr; — Passes the real client IP to the backend
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; — Passes the client IP chain (useful if multiple proxies are involved)
+proxy_set_header X-Forwarded-Proto $scheme; — Tells the backend whether the original request was http or https
+
+API Endpoint
+GET /posthog/enabled?client_id=AA0720&platform=app
+
+client_id: AA0720 — Unique client identifier to check enabled status for
+platform: app — Platform the client is running on
+Backend target: 10.x.x.x:8500
+
+Steps Performed
+
+Added upstream posthog_API { server 10.x.x.x:8500; } inside the http {} block of the UAT nginx config (outside server {}).
+Added an exact-match location = /posthog/enabled {} block inside the relevant server {} block.
+Set proxy_pass to point to the posthog_API upstream.
+Added standard proxy headers (Host, X-Real-IP, X-Forwarded-For, X-Forwarded-Proto) to preserve original request context for the backend.
+Validated the configuration: sudo docker exec nginx nginx -t
+Reloaded nginx to apply changes: sudo docker exec nginx nginx -s reload
+
+Verification
+Test the endpoint after deployment:
+curl "https://invest.venturasecurities.uat/posthog/enabled?client_id=AA0720&platform=app"
+Confirm:
+
+Request returns expected response (client enabled status) instead of 404/502.
+Trailing-slash or sub-path requests (e.g. /posthog/enabled/) correctly do not match, per exact-match routing.
+
