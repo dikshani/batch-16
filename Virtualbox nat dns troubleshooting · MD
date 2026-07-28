@@ -1,0 +1,109 @@
+# VirtualBox NAT VM — DNS Resolution Issue & Fix
+ 
+**VM:** Ubuntu-Ansible (VirtualBox, NAT networking mode)
+**Problem:** `ping github.com` → `Temporary failure in name resolution`, jabki `ping 8.8.8.8` (raw IP) kaam kar raha tha.
+ 
+---
+ 
+## Root Cause
+ 
+VirtualBox ka **NAT networking mode** apna khud ka internal DNS relay/proxy provide karta hai, jo hamesha `10.0.2.3` par available hota hai. Yeh NAT layer sirf isi internal proxy ko DNS queries forward karta hai — koi bhi external DNS server (jaise `8.8.8.8`, `1.1.1.1`, `9.9.9.9`) ko VM se directly query karna **block/refuse** ho jaata hai. Yeh VirtualBox ka normal/expected behavior hai, koi bug ya misconfiguration nahi.
+ 
+Isi wajah se:
+- `ping 8.8.8.8` (raw IP par packet) → **kaam karta hai**, kyunki isme DNS lookup ki zaroorat nahi thi.
+- `dig`/`nslookup @8.8.8.8` (DNS query) → **fail hota hai**, kyunki query VirtualBox NAT se pass hi nahi hoti.
+---
+ 
+## Diagnostic Steps (Commands + Explanation)
+ 
+### 1. Check internet connectivity (raw IP)
+```bash
+ping -c 2 8.8.8.8
+```
+**Kya karta hai:** Sirf ek IP address tak ICMP packet bhejta hai — DNS involve nahi hota. Agar yeh kaam karta hai, matlab VM ka network route/internet connection theek hai.
+ 
+### 2. Check DNS resolution specifically
+```bash
+nslookup github.com 8.8.8.8
+dig github.com @8.8.8.8
+```
+**Kya karta hai:** `github.com` naam ko IP mein resolve karne ke liye specifically `8.8.8.8` server se query karta hai. Agar yeh timeout/refuse hota hai lekin ping kaam karta hai, matlab problem sirf DNS resolution mein hai, poori connectivity mein nahi.
+ 
+### 3. Check TCP vs UDP DNS
+```bash
+dig +tcp github.com @8.8.8.8
+```
+**Kya karta hai:** Normally DNS UDP par chalta hai; yeh command TCP port 53 try karta hai. `connection refused` milna confirm karta hai ki yeh sirf ek UDP filtering issue nahi hai — poora external DNS server hi block/unreachable hai NAT ki wajah se.
+ 
+### 4. Check VM's routing table
+```bash
+ip route
+ip addr
+```
+**Kya karta hai:** Default gateway (`10.0.2.2`) aur IP subnet (`10.0.2.x`) dikhata hai — yeh confirm karta hai ki VM **VirtualBox NAT mode** mein hai (NAT ka signature subnet hamesha `10.0.2.x` hota hai).
+ 
+### 5. Test VirtualBox's own DNS relay
+```bash
+dig github.com @10.0.2.3
+```
+**Kya karta hai:** `10.0.2.3` VirtualBox NAT ka built-in DNS proxy address hai. Agar yeh query successfully resolve hoti hai (jabki `8.8.8.8`/`1.1.1.1` nahi hoti), toh yeh confirm ho jaata hai ki fix sirf resolver ko `10.0.2.3` par point karna hai.
+ 
+---
+ 
+## The Fix
+ 
+### Step 1 — Resolv.conf ko reset karo (agar pehle manually override kiya tha)
+```bash
+sudo chattr -i /etc/resolv.conf
+sudo rm -f /etc/resolv.conf
+sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+sudo systemctl restart systemd-resolved
+```
+**Kya karta hai:** Agar pehle `/etc/resolv.conf` ko manually `nameserver 8.8.8.8` se overwrite/immutable (`chattr +i`) kiya gaya tha, toh yeh use hata kar wapas normal `systemd-resolved`-managed symlink par le aata hai.
+ 
+### Step 2 — DNS server ko VirtualBox proxy par set karo
+```bash
+sudo resolvectl dns enp0s3 10.0.2.3
+```
+**Kya karta hai:** VM ke network interface (`enp0s3`) ke liye DNS server explicitly `10.0.2.3` set karta hai — jo VirtualBox NAT ke through actually kaam karta hai.
+ 
+### Step 3 — Verify
+```bash
+resolvectl status enp0s3
+ping -c 2 github.com
+```
+**Kya karta hai:** Confirm karta hai ki DNS server setting apply ho gayi, aur `github.com` ab successfully resolve + ping ho raha hai.
+ 
+### Step 4 — Reboot ke baad bhi persist kare, isliye
+```bash
+sudo mkdir -p /etc/systemd/resolved.conf.d
+sudo tee /etc/systemd/resolved.conf.d/10-vbox-nat.conf <<'EOF'
+[Resolve]
+DNS=10.0.2.3
+EOF
+sudo systemctl restart systemd-resolved
+```
+**Kya karta hai:** `resolvectl dns` command sirf runtime ke liye hota hai — VM restart ya interface re-DHCP hone par revert ho jaata. Yeh config file DNS setting ko permanently save karta hai taaki reboot ke baad bhi `10.0.2.3` automatically use ho.
+ 
+---
+ 
+## Alternative Fix (Host-side)
+ 
+Agar `10.0.2.3` proxy khud unreliable ho, toh VM ko host machine ka DNS use karwaya ja sakta hai (VM powered off hoke, host par run karo):
+```bash
+VBoxManage modifyvm "Ubuntu-Ansible" --natdnshostresolver1 on
+```
+**Kya karta hai:** VM ko force karta hai ki woh apne DNS queries ke liye host machine ka resolver use kare, VirtualBox ke internal proxy ke bajaye. Generally zyada reliable, especially jab host ka network setup complex ho (VPN, corporate DNS, etc.).
+ 
+---
+ 
+## Summary
+ 
+| Symptom | Reason |
+|---|---|
+| `ping 8.8.8.8` works | Raw IP, no DNS needed |
+| `ping github.com` fails | DNS query never reaches external DNS server |
+| `dig @8.8.8.8` times out / refused | VirtualBox NAT blocks arbitrary external DNS |
+| `dig @10.0.2.3` works | VirtualBox NAT's own DNS relay is reachable |
+ 
+**Fix:** VM ka resolver `10.0.2.3` (ya host resolver) use kare, na ki hardcoded public DNS IPs.
