@@ -451,3 +451,182 @@ which confirms that the backend is operational and only requires the expected re
 | Port 2012 | ✅ Listening |
 | 502 Bad Gateway | ✅ Resolved |
 | Current Issue | Missing `x-client-id` header |
+
+
+
+
+
+
+
+
+---
+
+## Permanent Fix - Create Systemd Service for SIP API
+
+### Problem
+
+The SIP API (`build/sip`) was not configured as a systemd service.
+
+As a result:
+
+- The EC2 server was stopped every night and started every morning using a scheduler.
+- After server startup, the SIP API process did not start automatically.
+- Nginx attempted to forward requests to `10.0.1.223:2012`, but no process was listening on port **2012**.
+- This resulted in a **502 Bad Gateway** error.
+
+Example:
+
+```
+https://invest.venturasecurities.uat/stocks/sip/v1/list?page=1
+```
+
+---
+
+## Verify Existing Process
+
+Before creating the service, check whether the SIP API is already running.
+
+```bash
+ps -ef | grep "/home/ubuntu/uat/project-cash/src/transaction/sip/apis/build/sip"
+```
+
+Check whether port **2012** is listening.
+
+```bash
+ss -lntp | grep 2012
+```
+
+If the API is already running manually, stop it before starting the systemd service.
+
+```bash
+pkill -f "/home/ubuntu/uat/project-cash/src/transaction/sip/apis/build/sip"
+```
+
+---
+
+## Create Systemd Service
+
+Create a new service file.
+
+```bash
+sudo nano /etc/systemd/system/stock_sip_api.service
+```
+
+Paste the following configuration.
+
+```ini
+[Unit]
+Description=Stock SIP API Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/uat/project-cash/src/transaction/sip/apis
+ExecStart=/home/ubuntu/uat/project-cash/src/transaction/sip/apis/build/sip /home/ubuntu/uat/project-cash/src/transaction/sip/apis/config.json
+Restart=always
+RestartSec=5
+
+StandardOutput=append:/var/log/stock_sip_api.log
+StandardError=append:/var/log/stock_sip_api.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## Reload Systemd
+
+Reload the systemd daemon to recognize the new service.
+
+```bash
+sudo systemctl daemon-reload
+```
+
+---
+
+## Enable Service
+
+Enable the service so it starts automatically whenever the server boots.
+
+```bash
+sudo systemctl enable stock_sip_api.service
+```
+
+---
+
+## Start Service
+
+```bash
+sudo systemctl start stock_sip_api.service
+```
+
+---
+
+## Verify Service Status
+
+```bash
+sudo systemctl status stock_sip_api.service
+```
+
+Expected output:
+
+```
+Active: active (running)
+```
+
+---
+
+## Verify Listening Port
+
+Confirm that the SIP API is listening on port **2012**.
+
+```bash
+ss -lntp | grep 2012
+```
+
+Expected:
+
+```
+LISTEN 0 4096 0.0.0.0:2012
+```
+
+---
+
+## Test the API
+
+Verify that the API is responding.
+
+```bash
+curl -H "x-client-id: test" "http://127.0.0.1:2012/sip/v1/list?page=1"
+```
+
+If the API responds, Nginx will also be able to forward requests successfully.
+
+---
+
+## Monitor Logs
+
+Check service logs.
+
+```bash
+sudo journalctl -u stock_sip_api.service -f
+```
+
+Or check the application log.
+
+```bash
+tail -f /var/log/stock_sip_api.log
+```
+
+---
+
+## Benefits
+
+- Automatically starts after every server reboot.
+- No manual execution of `./build/sip config.json` is required.
+- Automatically restarts if the application crashes.
+- Prevents recurring **502 Bad Gateway** errors caused by the SIP API not running.
+- Suitable for servers that are stopped and started daily using AWS Scheduler.
+
