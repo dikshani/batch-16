@@ -21,6 +21,41 @@ Function ke code ko `finarkein_coordination.py` module chahiye tha, lekin deploy
 
 Python Lambda function apne deployment ZIP aur attached layers se modules import karta hai. Required Python file ZIP ke importable location par nahi thi.
 
+## Flowchart
+
+```text
+Lambda Error
+     |
+     v
+Check CloudWatch Logs
+     |
+     v
+Missing Module: finarkein_coordination
+     |
+     v
+Prepare finarkein_coordination.py
+     |
+     v
+Add Module to Lambda Code
+     |
+     v
+Create Updated ZIP Package
+     |
+     v
+Verify ZIP Contents
+     |
+     v
+Deploy and Test Lambda
+     |
+     v
+Check CloudWatch Logs and Response
+     |
+     v
+Confirm Fix
+(Deployment and successful invocation
+still need verification)
+```
+
 ## 4. Fix Process
 
 ### Step 1: Required Python file identify karna
