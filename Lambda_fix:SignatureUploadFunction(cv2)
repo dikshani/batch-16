@@ -21,6 +21,51 @@ Unable to import module 'auth': No module named 'cv2'
 
 `cv2` OpenCV ka Python module hai. Lambda ke runtime import path mein required OpenCV dependency available nahi thi.
 
+## Flowchart
+
+```text
+Lambda Error
+     |
+     v
+Check CloudWatch Logs
+     |
+     v
+Error: No module named 'cv2'
+     |
+     v
+Prepare OpenCV and NumPy Dependencies
+     |
+     v
+Build Docker Image
+     |
+     v
+Push Image to Amazon ECR
+     |
+     v
+Create Separate Test Lambda
+     |
+     v
+Invoke Test Lambda
+     |
+     v
+cv2 Import Error Resolved
+     |
+     v
+Synthetic Request Returns HTTP 400
+     |
+     v
+Test with Valid Signature Request
+     |
+     v
+Verify End-to-End Functionality
+     |
+     v
+Production Deployment
+(Only after successful testing
+and approval)
+```
+
+
 ## 3. Original Lambda Layers
 
 Troubleshooting ke waqt original function mein five layers configured the:
